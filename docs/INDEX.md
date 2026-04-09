@@ -12,6 +12,7 @@ Start here when continuing work:
 
 ### 📚 Technical Reference
 - **[project-data.md](project-data.md)** — Full technical specification (authoritative source, 140+ pages)
+- **[data-architecture.md](data-architecture.md)** — Parquet + DuckDB design, data generation flow, relationships, queries
 
 ### 📋 Implementation Details — All Complete ✅
 
