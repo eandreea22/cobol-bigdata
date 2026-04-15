@@ -61,6 +61,10 @@ Bytes 77-78:   Return code (PIC 99)
 
 ### 🎨 Phase 8: UI Layer — Web Interface Documentation ✅
 
+- **[UI-REDESIGN.md](UI-REDESIGN.md)** — Full v2 redesign spec: design tokens, component library, sidebar nav, layout diagrams, CSS override map
+
+
+
 Interactive Streamlit UI for testing the hybrid COBOL-Python system. Three tabs expose core analytics:
 
 - **[ui_design.md](ui_design.md)** — Technology choice, architecture, tab specifications, component design
