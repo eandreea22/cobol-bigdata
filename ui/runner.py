@@ -52,8 +52,8 @@ def run_script(script_path: str, args: list) -> str:
                 f"stderr: {result.stderr}"
             )
 
-        # Return stdout, stripped of trailing whitespace (including CRLF)
-        output = result.stdout.strip()
+        # Return stdout, stripped only of newlines (preserve spaces in fixed-width record)
+        output = result.stdout.rstrip('\n\r')
         if not output:
             raise RunnerError(f"Script {script_path} produced no output")
 
