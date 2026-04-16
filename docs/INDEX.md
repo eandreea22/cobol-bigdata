@@ -14,6 +14,34 @@ Start here when continuing work:
 - **[project-data.md](project-data.md)** — Full technical specification (authoritative source, 140+ pages)
 - **[data-architecture.md](data-architecture.md)** — Parquet + DuckDB design, data generation flow, relationships, queries
 
+### 🎉 Completed Features
+
+#### Customer Search & Management Feature — COMPLETE ✅
+
+- **[FEATURE-COMPLETION-SUMMARY.md](FEATURE-COMPLETION-SUMMARY.md)** — Executive summary & sign-off (production-ready for demo)
+
+#### Fraud Detection Enhancement — COMPLETE ✅
+
+- **[FRAUD-DETECTION-QUICK-START.md](FRAUD-DETECTION-QUICK-START.md)** — User guide: How to use the new transaction list feature
+- **[FEATURE-FRAUD-DETECTION-IMPLEMENTATION-COMPLETE.md](FEATURE-FRAUD-DETECTION-IMPLEMENTATION-COMPLETE.md)** — ✅ Implementation complete: transaction list, pagination, form pre-filling, all tests passing
+- **[FEATURE-FRAUD-DETECTION-ENHANCEMENT.md](FEATURE-FRAUD-DETECTION-ENHANCEMENT.md)** — Design analysis: transaction-based analysis, UX/technical assessment
+- **[FEATURE-FRAUD-DETECTION-IMPLEMENTATION.md](FEATURE-FRAUD-DETECTION-IMPLEMENTATION.md)** — Step-by-step implementation guide (reference)
+- **[FEATURE-FRAUD-DETECTION-PROGRESS.md](FEATURE-FRAUD-DETECTION-PROGRESS.md)** — Task checklist and progress tracker (reference)
+
+**Implementation Documentation (5 phases):**
+- **[FEATURE-CUSTOMER-MANAGEMENT.md](FEATURE-CUSTOMER-MANAGEMENT.md)** — Implementation plan: customer search by last name + customer list page + COBOL update pipeline
+- **[FEATURE-PROGRESS.md](FEATURE-PROGRESS.md)** — Checklist tracker for the customer management feature
+- **[FEATURE-PHASE1-IMPLEMENTATION.md](FEATURE-PHASE1-IMPLEMENTATION.md)** — ✅ Phase 1: Backend Python scripts (`customer_search.py`, `customer_list.py`, `customer_update.py`)
+- **[FEATURE-PHASE2-IMPLEMENTATION.md](FEATURE-PHASE2-IMPLEMENTATION.md)** — ✅ Phase 2: COBOL validation program (`CUSTOMER-UPDATE.cbl`)
+- **[FEATURE-PHASE3-IMPLEMENTATION.md](FEATURE-PHASE3-IMPLEMENTATION.md)** — ✅ Phase 3: UI parse functions (3 new parsers in `ui/parse.py`)
+- **[FEATURE-PHASE4-IMPLEMENTATION.md](FEATURE-PHASE4-IMPLEMENTATION.md)** — ✅ Phase 4: UI components (search widget, customer list page, sidebar integration)
+- **[FEATURE-PHASE4-BUGFIX.md](FEATURE-PHASE4-BUGFIX.md)** — ✅ Bug fix: Customer List page auto-loads all customers by default
+- **[FEATURE-SEARCH-FIX.md](FEATURE-SEARCH-FIX.md)** — Bug fix v1: Search by last name simplified
+- **[FEATURE-SEARCH-FIX-V2.md](FEATURE-SEARCH-FIX-V2.md)** — Bug fix v2: Complete rewrite - simplified session state, arrow button
+- **[CUSTOMER360-FINAL-FIX.md](CUSTOMER360-FINAL-FIX.md)** — ✅ Final fix: Dark text visibility, working select button, search-only workflow, auto-loading
+- **[PAGES-CUSTOMER-SELECTION.md](PAGES-CUSTOMER-SELECTION.md)** — ✅ Loan Assessment & Fraud Detection: Read-only customer selection, form for details entry
+- **[FEATURE-PHASE5-INTEGRATION-TESTING.md](FEATURE-PHASE5-INTEGRATION-TESTING.md)** — ✅ Phase 5: Integration testing & verification (33 test cases, all passing)
+
 ### 📋 Implementation Details — All Complete ✅
 
 - ✅ Phase 1a: `python/utils/ipc_formatter.py` — IPC formatting utilities
