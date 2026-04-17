@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Page, Grid } from '../components/Layout'
 import { Card, MetricCard } from '../components/Card'
@@ -23,7 +23,15 @@ interface BatchFraudResult {
   }>
 }
 
-export const FraudDetection: React.FC = () => {
+interface FraudDetectionProps {
+  preSelectedCustomerId?: string | null
+  onCustomerSelected?: () => void
+}
+
+export const FraudDetection: React.FC<FraudDetectionProps> = ({
+  preSelectedCustomerId,
+  onCustomerSelected
+}) => {
   const [batchData, setBatchData] = useState<BatchFraudResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,6 +54,13 @@ export const FraudDetection: React.FC = () => {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (preSelectedCustomerId) {
+      handleFetch(preSelectedCustomerId)
+      onCustomerSelected?.()
+    }
+  }, [preSelectedCustomerId])
 
   const filteredTransactions = batchData?.transactions.filter(t => {
     if (filter === 'all') return true

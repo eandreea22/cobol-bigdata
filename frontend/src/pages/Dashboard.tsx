@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Page, Grid } from '../components/Layout'
 import { Card, MetricCard, StatusCard } from '../components/Card'
@@ -17,7 +17,15 @@ interface Customer360Data {
   return_code: string
 }
 
-export const Dashboard: React.FC = () => {
+interface DashboardProps {
+  preSelectedCustomerId?: string | null
+  onCustomerSelected?: () => void
+}
+
+export const Dashboard: React.FC<DashboardProps> = ({
+  preSelectedCustomerId,
+  onCustomerSelected
+}) => {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
   const [data, setData] = useState<Customer360Data | null>(null)
   const [loading, setLoading] = useState(false)
@@ -43,6 +51,13 @@ export const Dashboard: React.FC = () => {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (preSelectedCustomerId) {
+      handleFetch(preSelectedCustomerId)
+      onCustomerSelected?.()
+    }
+  }, [preSelectedCustomerId])
 
   return (
     <Page

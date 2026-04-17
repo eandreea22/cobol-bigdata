@@ -14,7 +14,15 @@ interface Customer {
   last_transaction_date: string
 }
 
-export const CustomerManagement: React.FC = () => {
+interface CustomerManagementProps {
+  onNavigateToDashboard: (customerId: string) => void
+  onNavigateToFraud: (customerId: string) => void
+}
+
+export const CustomerManagement: React.FC<CustomerManagementProps> = ({
+  onNavigateToDashboard,
+  onNavigateToFraud
+}) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(false)
@@ -224,10 +232,18 @@ export const CustomerManagement: React.FC = () => {
               )}
 
               <div className="action-buttons">
-                <Button variant="tertiary" fullWidth>
+                <Button
+                  variant="tertiary"
+                  fullWidth
+                  onClick={() => onNavigateToDashboard(selectedCustomer.customer_id)}
+                >
                   View 360° Profile
                 </Button>
-                <Button variant="tertiary" fullWidth>
+                <Button
+                  variant="tertiary"
+                  fullWidth
+                  onClick={() => onNavigateToFraud(selectedCustomer.customer_id)}
+                >
                   Check Fraud Risk
                 </Button>
               </div>

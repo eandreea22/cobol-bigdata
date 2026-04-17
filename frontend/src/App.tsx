@@ -10,6 +10,7 @@ type PageId = 'dashboard' | 'loans' | 'fraud' | 'customers'
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<PageId>('dashboard')
+  const [preSelectedCustomerId, setPreSelectedCustomerId] = useState<string | null>(null)
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Customer 360°', icon: '👤' },
@@ -21,15 +22,36 @@ const App: React.FC = () => {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard />
+        return (
+          <Dashboard
+            preSelectedCustomerId={preSelectedCustomerId}
+            onCustomerSelected={() => setPreSelectedCustomerId(null)}
+          />
+        )
       case 'loans':
         return <LoanAssessment />
       case 'fraud':
-        return <FraudDetection />
+        return (
+          <FraudDetection
+            preSelectedCustomerId={preSelectedCustomerId}
+            onCustomerSelected={() => setPreSelectedCustomerId(null)}
+          />
+        )
       case 'customers':
-        return <CustomerManagement />
+        return (
+          <CustomerManagement
+            onNavigateToDashboard={(customerId) => {
+              setPreSelectedCustomerId(customerId)
+              setCurrentPage('dashboard')
+            }}
+            onNavigateToFraud={(customerId) => {
+              setPreSelectedCustomerId(customerId)
+              setCurrentPage('fraud')
+            }}
+          />
+        )
       default:
-        return <Dashboard />
+        return <Dashboard preSelectedCustomerId={preSelectedCustomerId} onCustomerSelected={() => setPreSelectedCustomerId(null)} />
     }
   }
 
