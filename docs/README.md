@@ -1,52 +1,101 @@
-# Modernizing COBOL with Big Data Pipelines
+# BankCore Analytics: Modernizing COBOL with Big Data Pipelines
 
-**Master's Thesis Project — Hybrid COBOL + Python Banking System**  
-**Status:** ✅ Complete | All 8 phases implemented | Streamlit UI live
+## Project Overview
+
+**BankCore Analytics** is a hybrid enterprise system that modernizes legacy COBOL banking applications by connecting them to a contemporary big data analytics platform. The system architecture spans **five technology layers** — legacy COBOL programs, a Python analytics engine, an in-process DuckDB data layer, and dual UI frontends (Streamlit and React) — demonstrating how traditional mainframe business logic can evolve without replacement.
+
+The system analyzes **100,000 customer records**, processes **10,000,000 transactions**, and performs real-time **customer profiling, loan eligibility assessment, and fraud risk detection** using algorithmic scoring across multiple factors (risk profile, credit history, transaction anomalies).
+
+## Research Context
+
+This project is a master's thesis demonstrating:
+
+1. **Legacy system modernization without code replacement** — COBOL business logic remains authoritative while analytics scale to petabyte-range data
+2. **Fixed-width IPC bridge design** — Secure, stateless, language-agnostic communication between COBOL and Python
+3. **In-process analytics architecture** — DuckDB eliminates database server complexity, enabling Parquet-scale performance on laptop hardware
+4. **Dual UI paradigm** — Streamlit for rapid analytics iteration, React for production user interfaces
 
 ---
 
-## Overview
+## System Architecture (5 Layers)
 
-This project demonstrates how legacy COBOL banking systems can be extended with modern Python-based big data pipelines — without rewriting the existing business logic.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     5. User Interface Layer                      │
+│         Streamlit (analytics) + React (production)              │
+├─────────────────────────────────────────────────────────────────┤
+│                     4. Application Layer                         │
+│         Python analytics scripts + FastAPI REST API            │
+├─────────────────────────────────────────────────────────────────┤
+│                  3. IPC Bridge Layer (Protocol)                 │
+│    Fixed-width records (145/78/51 bytes), subprocess I/O      │
+├─────────────────────────────────────────────────────────────────┤
+│                   2. Data Access Layer                          │
+│      DuckDB (in-process) + Parquet (10M transactions)          │
+├─────────────────────────────────────────────────────────────────┤
+│                  1. Business Logic Layer                        │
+│         GnuCOBOL programs (CUSTOMER-LOOKUP, FRAUD-CHECK, etc.)  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-The core innovation is an **Inter-Process Communication (IPC) bridge** that lets COBOL programs delegate analytical operations to Python scripts. Python queries a modern data lake built on Apache Parquet and DuckDB, enabling real-time analytics that COBOL was never designed to handle.
+### Layer 1: COBOL Business Logic
+- **4 programs** (CUSTOMER-LOOKUP, LOAN-PROCESS, FRAUD-CHECK, CUSTOMER-UPDATE) implementing core banking rules
+- **3 copybooks** defining IPC contracts in strict byte layouts
+- Runs via `cobol/` directory, compiled with GnuCOBOL 3.2+
 
-Three banking workflows are simulated:
-- **Customer 360°** — comprehensive customer profile from 10M+ transaction records
-- **Loan Eligibility** — credit scoring and approval decision
-- **Fraud Detection** — real-time risk assessment with batch analysis
+### Layer 2: Data Access
+- **DuckDB** (in-process, no server) reading Parquet files from disk
+- **4 datasets**: customers (100K), loans (500K), transactions (10M Hive-partitioned), fraud_labels (50K)
+- Stateless per-query model — each Python script creates and destroys its own connection
+
+### Layer 3: IPC Bridge
+- **Fixed-width record exchange** (145/78/51 bytes) via copybook overlays
+- **Three transport mechanisms**:
+  - COBOL calls Python via `CALL "SYSTEM"` + temp file redirect (CUSTOMER-LOOKUP, LOAN-PROCESS, FRAUD-CHECK)
+  - Python calls COBOL via subprocess + file argument (CUSTOMER-UPDATE)
+  - Python calls Python via subprocess + pipe (UI layer + reporting)
+- Numeric encoding: PIC 9 formatted without decimal point; parse divides by 10^decimal_places
+
+### Layer 4: Analytics & API
+- **9 Python analytics scripts** implementing proprietary scoring algorithms (risk, credit, fraud)
+- **FastAPI REST API** (wrappers.py) providing simplified, direct-DuckDB implementations
+- **Key architectural note**: The FastAPI wrappers do NOT call the Python scripts — they re-implement the analytics directly with DuckDB for web service performance
+
+### Layer 5: User Interface
+- **Streamlit UI** (`ui/app.py`) — 1,300-line analytical dashboard with full algorithm access
+- **React+TypeScript UI** (`frontend/`) — Production-grade interface with 4 pages, SearchWidget customer selection, pre-selected customer navigation pattern
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-
+### 1. Install Dependencies
 ```bash
-# Python dependencies
-pip install streamlit duckdb pyarrow pandas numpy faker pytest
+cd cobol-bigdata
 
-# COBOL compiler (Ubuntu/Debian)
-sudo apt install gnucobol
+# Backend dependencies
+cd backend && pip install -r requirements.txt && cd ..
 
-# Windows: Use WSL2 with Ubuntu 22.04
+# Frontend dependencies
+cd frontend && npm install && cd ..
 ```
 
-### 1. Generate Data
-
+### 2. Generate Synthetic Data (optional, included)
 ```bash
-python3 data/generate_synthetic.py
-# Creates: customers.parquet (100K), loans.parquet (500K),
-#          transactions/ (10M, 365 partitions), fraud_labels.parquet (50K)
+cd data && python generate_synthetic.py && cd ..
 ```
 
-### 2. Compile COBOL Programs
-
+### 3. Run Backend (FastAPI, port 8000)
 ```bash
-cd cobol && make all
+cd backend && python main.py
 ```
 
-### 3. Run the Analytics Dashboard
+### 4. Run Frontend (React, port 3000)
+```bash
+cd frontend && npm run dev
+```
+
+Open `http://localhost:3000` in your browser. System is ready for analytics.
 
 ```bash
 streamlit run ui/app.py

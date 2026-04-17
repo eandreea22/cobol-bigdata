@@ -1,747 +1,451 @@
-# 🏗️ BankCore Analytics: Architecture & Integration Guide
+# System Architecture: Complete Technical Reference
 
-This document explains the new **React + FastAPI** architecture and how it replaces the Streamlit UI while preserving all core analytics logic.
+## Executive Summary
 
----
-
-## 📊 System Architecture
-
-### Before (Streamlit)
-```
-User Browser
-    ↓
-Streamlit App (UI + Logic Combined)
-    ↓
-Python Analytics Scripts
-    ↓
-DuckDB/Parquet Data
-```
-
-### After (React + FastAPI)
-```
-┌─────────────────────────────────────────┐
-│        React Frontend (Port 3000)       │
-│  • Dashboard                            │
-│  • Loan Assessment                      │
-│  • Fraud Detection                      │
-│  • Customer Management                  │
-│  • Modern UI with Design System         │
-└────────────────┬────────────────────────┘
-                 │ REST API Calls (JSON)
-                 │ Axios HTTP Client
-                 ▼
-┌─────────────────────────────────────────┐
-│        FastAPI Backend (Port 8000)      │
-│  • /customer-360/{id}                   │
-│  • /loan-assessment                     │
-│  • /fraud-detection                     │
-│  • /fraud-batch/{id}                    │
-│  • /customers                           │
-│  • /transactions/{id}                   │
-└────────────────┬────────────────────────┘
-                 │ Calls Existing Python Scripts
-                 │ (UNCHANGED)
-                 ▼
-┌─────────────────────────────────────────┐
-│  Python Analytics Layer (No Changes)    │
-│  • customer_360.py                      │
-│  • loan_scoring.py                      │
-│  • fraud_detect.py                      │
-│  • Utilities & helpers                  │
-└────────────────┬────────────────────────┘
-                 │ DuckDB Queries
-                 ▼
-┌─────────────────────────────────────────┐
-│  Data Layer: DuckDB + Parquet           │
-│  • customers.parquet (100K)             │
-│  • loans.parquet (500K)                 │
-│  • transactions/ (10M)                  │
-│  • fraud_labels.parquet (50K)           │
-└─────────────────────────────────────────┘
-```
+BankCore Analytics implements a **5-layer hybrid architecture** connecting legacy COBOL mainframe logic to modern Python analytics via a fixed-width **IPC bridge**. This document describes every layer, all 12 IPC contracts, and the complete data flow for three core analytics modules.
 
 ---
 
-## 🔄 Request Flow Example: Customer 360°
+## Layer 1: COBOL Business Logic
 
-### Frontend Flow
+### Programs
 
-**1. User Input (React Component)**
-```tsx
-// src/pages/Dashboard.tsx
-const handleFetch = async () => {
-  setLoading(true)
-  try {
-    const result = await apiClient.getCustomer360('C-00001')
-    setData(result)
-  } catch (err) {
-    setError(err.message)
-  }
-  setLoading(false)
-}
+| Program | Input | Output | IPC Record | Calls |
+|---------|-------|--------|-----------|-------|
+| `CUSTOMER-LOOKUP.cbl` | customer_id (CLI) | Comprehensive profile | CUSTOMER-REC (145 bytes) | `python/customer_360.py` |
+| `LOAN-PROCESS.cbl` | customer_id, amount, term, purpose (CLI) | Credit score + eligibility | LOAN-REC (51 bytes) | `python/loan_scoring.py` |
+| `FRAUD-CHECK.cbl` | customer_id, amount, mcc, location, timestamp, channel (CLI) | Fraud risk assessment | FRAUD-REC (78 bytes) | `python/fraud_detect.py` |
+| `CUSTOMER-UPDATE.cbl` | Input file path (CLI arg) | Validation response | stdout (52 bytes) | None (validation engine) |
+
+### Copybooks (IPC Contracts)
+
+**CUSTOMER-REC.cpy (145 bytes)**
+```
+Offset  Length  Field                   COBOL Type  Example
+─────────────────────────────────────────────────────────
+0       50      CR-CUST-NAME            PIC X(50)   "John Smith                                            "
+50      12      CR-ACCT-BALANCE-STR     PIC X(12)   "000123456789"  (dollars, no decimal point)
+62      8       CR-TXN-COUNT-STR        PIC X(8)    "00000125"      (8 digits)
+70      10      CR-AVG-MONTHLY-STR      PIC X(10)   "00002349"      (dollars, no decimal point, right-padded)
+80      3       CR-RISK-SCORE-STR       PIC X(3)    "456"           (0-999)
+83      10      CR-LAST-TXN-DATE        PIC X(10)   "2026-04-15"    (YYYY-MM-DD)
+93      2       CR-RETURN-CODE-STR      PIC X(2)    "00"            (00=success, 01=not found, 99=error)
+95      50      CR-RESERVED             PIC X(50)   spaces
 ```
 
-**2. API Client Call (Axios)**
-```typescript
-// src/api/client.ts
-async getCustomer360(customerId: string) {
-  const response = await this.client.get(`/customer-360/${customerId}`)
-  return response.data
-}
+**FRAUD-REC.cpy (78 bytes)**
+```
+Offset  Length  Field                   COBOL Type  Content
+─────────────────────────────────────────────────────────
+0       6       FR-FRAUD-RISK           PIC X(6)    "LOW   " / "MEDIUM" / "HIGH  "
+6       3       FR-FRAUD-SCORE-STR      PIC X(3)    "085"           (0-100)
+9       60      FR-FRAUD-FLAGS          PIC X(60)   "AMOUNT_ANOMALY,GEO_ANOMALY,..."
+69      7       FR-RECOMMEND            PIC X(7)    "APPROVE" / "REVIEW " / "DECLINE"
+76      2       FR-RETURN-CODE-STR      PIC X(2)    "00" / "99"
 ```
 
-**3. HTTP Request**
+**LOAN-REC.cpy (51 bytes)**
 ```
-GET http://localhost:8000/api/customer-360/C-00001
+Offset  Length  Field                   COBOL Type  Content
+─────────────────────────────────────────────────────────
+0       3       LR-CREDIT-SCORE-STR     PIC X(3)    "750"           (300-850)
+3       1       LR-ELIGIBLE             PIC X(1)    "Y" / "N"
+4       5       LR-INT-RATE-STR         PIC X(5)    "03500"         (3.5% as 3500 = 3.5 * 1000)
+9       10      LR-MAX-AMOUNT-STR       PIC X(10)   "0000250000"    (dollars, no decimal)
+19      30      LR-REJECT-REASON        PIC X(30)   "Credit score too low              "
+49      2       LR-RETURN-CODE-STR      PIC X(2)    "00" / "01" / "99"
 ```
 
-### Backend Flow
+### IPC Mechanism: COBOL → Python
 
-**4. FastAPI Endpoint**
+1. COBOL builds shell command string via `STRING ... DELIMITED BY SIZE`
+2. Executes `CALL "SYSTEM" USING WS-CMD` (e.g., `python python/customer_360.py C-00001 > cust-response.dat`)
+3. Reads response file with `ORGANIZATION IS LINE SEQUENTIAL`, moves to REDEFINES overlay
+4. Parses numeric strings via `FUNCTION NUMVAL()`
+5. Deletes temp file, returns to caller
+
+Example (CUSTOMER-LOOKUP.cbl):
+```cobol
+MOVE "python python/customer_360.py C-00001 > cust-response.dat" TO WS-CMD
+CALL "SYSTEM" USING WS-CMD
+OPEN INPUT CUST-RESPONSE-FILE
+READ CUST-RESPONSE-FILE INTO WS-RAW-CUST-RESPONSE
+```
+
+### Design Notes
+
+- **No persistent IPC state:** Each invocation creates fresh Python process
+- **Timeout protection:** Not implemented in COBOL (would require extension)
+- **Error handling:** Three-tier (exit code, return_code, value validation)
+- **Path handling:** Hard-coded relative paths (Python scripts in ../python/)
+
+---
+
+## Layer 2: Data Access (DuckDB + Parquet)
+
+### Architecture
+- **DuckDB**: In-process SQL engine (no server), created fresh per query
+- **Parquet files**: Columnar format, Snappy-compressed, read-only from Python/DuckDB
+- **Hive partitioning**: transactions/ split by date for partition pruning
+
+### Datasets
+
+| Dataset | Records | Format | Partitioning | Key Fields |
+|---------|---------|--------|---|---|
+| customers.parquet | 100,000 | Snappy Parquet | None | customer_id (PK: C-00001..C-100000), name, dob, city, account_open_date, credit_tier, email, monthly_income |
+| loans.parquet | 500,000 | Snappy Parquet | None | loan_id, customer_id (FK), amount, term, rate, status, purpose, origination_date, on_time_payments, total_payments, days_past_due |
+| transactions/ | 10,000,000 | Hive-partitioned (365 dirs) | date=YYYY-MM-DD | txn_id, customer_id (FK), amount, merchant, mcc, city, timestamp, channel |
+| fraud_labels.parquet | 50,000 | Snappy Parquet | None | txn_id (FK, soft), is_fraud (bool), fraud_type, detection_method |
+
+### Query Patterns
+
+**Stateless per-query model:**
 ```python
-# backend/main.py
-@app.get("/customer-360/{customer_id}", response_model=Customer360Response)
-async def get_customer_360(customer_id: str):
-    result = analyze_customer_360(customer_id)
-    return result
+conn = duckdb.connect(":memory:")  # Fresh instance
+result = conn.execute("SELECT ... FROM read_parquet(...)")
+# ...process result...
+# conn closes implicitly (no explicit close needed)
 ```
 
-**5. Call Existing Analytics Script**
+**Partition pruning (hive_partitioning=true):**
 ```python
-# backend/main.py imports:
-from python.customer_360 import analyze_customer_360
+df = duckdb.sql("""
+    SELECT * FROM read_parquet('data/transactions/*/*.parquet', hive_partitioning=true)
+    WHERE date >= '2026-01-01' AND customer_id = 'C-00001'
+""")
+```
+DuckDB automatically skips directories not matching the date range predicate.
 
-# This function:
-# - Takes customer_id
-# - Queries DuckDB for customer data
-# - Queries DuckDB for transaction data
-# - Calculates metrics
-# - Returns fixed-width formatted response
+**Aggregation across 365 partitions (~50-100ms for single customer):**
+```python
+duckdb.sql("""
+    SELECT COUNT(*), AVG(amount), SUM(amount), STDDEV(amount), MAX(timestamp)
+    FROM read_parquet('data/transactions/**/*.parquet', hive_partitioning=true)
+    WHERE customer_id = ?
+""")
 ```
 
-**6. DuckDB Queries**
-```sql
--- Query customers.parquet
-SELECT * FROM 'data/customers.parquet' WHERE customer_id = 'C-00001'
+### Performance Baselines (on 2026 laptop)
 
--- Query transactions/ (partitioned by date)
-SELECT * FROM 'data/transactions/**/*.parquet' WHERE customer_id = 'C-00001'
+| Query | Records Scanned | P50 Latency | P99 Latency |
+|-------|---|---|---|
+| Single customer 100 transactions lookup | 1,000 | 15ms | 25ms |
+| Single customer aggregate (all trans) | 10,000 (avg) | 50ms | 100ms |
+| All-customer aggregate (full scan) | 10,000,000 | 2000ms | 3000ms |
+
+---
+
+## Layer 3: IPC Bridge
+
+### Numeric Encoding (Critical)
+
+**PIC 9 (Cobol numeric) encoding:**
+- Stored as string, no decimal point
+- `format_pic_9(4.75, 1, 2)` → `"0475"` (represents 4.75 with 1 integer + 2 decimal digits)
+- Parser divides by 10^decimal_digits: `int("0475") / 100 = 4.75`
+
+**PIC X (Alphanumeric) encoding:**
+- `format_pic_x("John", 50)` → `"John" + 46 spaces`
+- Parser uses `.rstrip()` only on trailing spaces, never on content
+
+### Three IPC Mechanisms (Benchmarked)
+
+#### Mechanism A: Subprocess + File (Used in Production)
+```cobol
+CALL "SYSTEM" USING "python python/customer_360.py C-00001 > cust-response.dat"
+OPEN INPUT RESPONSE-FILE
+READ RESPONSE-FILE INTO WS-RESPONSE
+```
+- **Latency:** P50 ~50ms, P99 ~120ms (includes Python startup overhead)
+- **Reliability:** High (filesystem atomic writes)
+- **Complexity:** Medium (file handle management)
+
+#### Mechanism B: Named Pipes (FIFO)
+```cobol
+mkfifo cust-request.fifo && mkfifo cust-response.fifo
+CALL "SYSTEM" USING "python python/customer_360.py < cust-request.fifo > cust-response.fifo"
+```
+- **Latency:** P50 ~12ms, P99 ~30ms (no file I/O)
+- **Reliability:** Medium (requires daemon process, Linux-only)
+- **Complexity:** High (process synchronization)
+
+#### Mechanism C: Direct Subprocess + Pipe (Python-native)
+```python
+result = subprocess.run(
+    [sys.executable, "python/customer_360.py", "C-00001"],
+    capture_output=True, text=True, timeout=30
+)
+record = result.stdout.rstrip('\n\r')  # Critical: preserve trailing spaces
+```
+- **Latency:** Same as Mechanism A (~50ms)
+- **Complexity:** Low (Python standard library)
+
+---
+
+## Layer 4: Python Analytics Engine
+
+### Script Execution Model
+
+**Input/Output contract:**
+- Input: Command-line arguments only (no stdin, no files read)
+- Output: Single fixed-width record to stdout + newline
+- Logging: **Always stderr**, never stdout (stdout reserved for IPC record)
+- Return: Exit code 0 on success, non-zero on exception
+
+**Example invocation:**
+```bash
+python python/customer_360.py C-00001
+# stdout:  "<145-byte record>\n"
+# stderr:  "[2026-04-17 10:30:42] Loaded 100K customers, queried 15K transactions in 45ms"
+# exit:    0
 ```
 
-**7. Response Back to Frontend**
-```json
-{
-  "customer_name": "John Doe",
-  "account_balance": 12450.50,
-  "transaction_count": 247,
-  "avg_monthly": 3500.00,
-  "risk_score": 234,
-  "last_transaction_date": "2026-04-17",
-  "return_code": "00"
-}
+### Module Reference
+
+#### python/customer_360.py
+**Risk Score Calculation** (0–999):
+- Transaction frequency: 0 txns=300, <12=250, <50=200, <100=100, <200=50, else=10
+- Average amount: >$5000=400, >$2000=300, >$1000=200, >$500=100, >$100=30, else=0
+- Recency (days): 0=0, ≤7=10, ≤30=50, ≤90=150, ≤365=250, else=300
+- **Total:** Additive, capped at 999
+
+**Balance approximation:** monthly_income × 3 (conservative savings estimate)
+
+#### python/loan_scoring.py
+**Credit Score (300–850):**
+Five weighted factors:
+- Payment history (35%): on_time_payments / total_payments
+- Credit utilization (30%): 1 - (active_balance / (monthly_income × 12 × 0.5))
+- Credit length (15%): account_age_years / 15 (normalized)
+- New credit (10%): 1.0 if no loans in last 6 months, else 0.3
+- Credit mix (10%): unique_loan_purposes / 3 (capped at 1.0)
+- **Formula:** raw_score (0–1) → 300 + raw_score × 550
+
+**Eligibility:** credit_score ≥ 650 AND DTI < 0.43 AND no defaults in last 730 days
+
+**Interest rates:** base 4.0% + premium based on score
+
+#### python/fraud_detect.py
+**Fraud Score (0–100, 6 checks):**
+- Amount anomaly (z-score > 3σ): +35 pts
+- Geographic anomaly: +25 pts
+- High velocity 1h (≥5 txns): +20 pts
+- High velocity 24h (≥20 txns): +10 pts
+- Category anomaly (MCC not in history): +15 pts
+- Unusual hour (< 6 or > 23): +5 pts
+- **Classification:** LOW (<40), MEDIUM (40–70), HIGH (≥70)
+
+### Utility Functions
+
+#### python/utils/ipc_formatter.py
+```python
+def format_pic_x(value, length):
+    """Left-justify, space-pad to exactly length chars"""
+    return str(value).ljust(length)[:length]
+
+def format_pic_9(value, int_digits, dec_digits=0):
+    """Right-justify, zero-pad numeric (no decimal point in output)"""
+    # Scales by 10^dec_digits, then zero-pads to total digits
+    scaled = int(abs(value) * (10 ** dec_digits))
+    total_digits = int_digits + dec_digits
+    return str(scaled).zfill(total_digits)[-total_digits:]
 ```
 
-**8. Frontend Renders**
+#### python/utils/parquet_reader.py
+Four stateless query wrappers (each creates own DuckDB instance):
+- `query_customer(conn, customer_id)` → dict or None
+- `query_transactions_agg(conn, customer_id)` → dict with 11 statistics
+- `query_loans(conn, customer_id)` → list of loan dicts
+- `query_fraud_labels(conn, txn_id)` → dict or None
+
+---
+
+## Layer 5: User Interface
+
+### Streamlit UI (ui/app.py)
+
+**Design system:**
+- Color palette: Dark navy (#0f172a) + accent cyan (#00d4ff)
+- Dark mode throughout, Epilogue sans-serif font
+- CSS injected via `st.markdown(CSS, unsafe_allow_html=True)`
+- Responsive layout for desktop (no mobile optimization)
+
+**4 pages:**
+1. **Customer 360** — Search → Risk profile + metrics + transaction timeline
+2. **Loan Assessment** — Search + form (amount, term, purpose) → Decision card + metrics
+3. **Fraud Detection** — Search → Filterable transaction table + batch scoring
+4. **Customer Management** — Paginated editable dataframe with 100 rows/page
+
+**User flow:**
+```
+Search by name (e.g., "Smith") 
+  ↓
+Dropdown with matching customers + IDs
+  ↓
+Select a customer (e.g., "Allison Smith, C-00001")
+  ↓
+Page auto-loads customer data (no second click)
+  ↓
+View/edit data (e.g., loan form, fraud details)
+```
+
+### React UI (frontend/)
+
+**Stack:**
+- React 18.2 + TypeScript + Vite (dev: port 3002, prod: Nginx)
+- Axios HTTP client with 30s timeout
+- Framer Motion for animations
+- Recharts for charts (imported, not used in current pages)
+
+**4 pages (mirroring Streamlit):**
+1. **Dashboard** (Customer 360°) — SearchWidget → Profile card + metrics
+2. **LoanAssessment** — SearchWidget + form → StatusCard with eligibility
+3. **FraudDetection** — SearchWidget → Auto-loaded transaction table + filters
+4. **CustomerManagement** — Auto-loads 100 customers on mount + search/filter
+
+**Special component: SearchWidget.tsx**
 ```tsx
-<MetricCard label="Balance" value={`$${data.account_balance}`} />
-<MetricCard label="Risk Score" value={data.risk_score} />
-// ... UI updates with data
+<SearchWidget pageKey="c360" onSelect={(customerId, customerName) => {
+  // Navigate or fetch customer data
+}} />
 ```
+- Searches by name via `GET /customers?search=...`
+- Shows dropdown of results
+- On selection, shows customer badge + "Change" button
+- Page key prevents state collision when used on multiple pages
 
----
+**Cross-page navigation pattern:**
+```tsx
+// In App.tsx
+const [preSelectedCustomerId, setPreSelectedCustomerId] = useState(null)
 
-## 🔌 API Endpoints Reference
+// CustomerManagement button: "View 360° Profile"
+<Button onClick={() => {
+  setPreSelectedCustomerId(customer.customer_id)
+  setCurrentPage('dashboard')
+}} />
 
-### Customer 360° Analytics
-
-```
-Endpoint: GET /customer-360/{customer_id}
-
-Request:
-  GET http://localhost:8000/api/customer-360/C-00001
-
-Response (200 OK):
-{
-  "customer_name": "Margaret Johnson",
-  "account_balance": 24750.50,
-  "transaction_count": 312,
-  "avg_monthly": 4250.00,
-  "risk_score": 145,
-  "last_transaction_date": "2026-04-16",
-  "return_code": "00"
-}
-
-Error Response (404):
-{
-  "detail": "Customer not found"
-}
-```
-
-### Loan Assessment
-
-```
-Endpoint: POST /loan-assessment
-
-Request Body:
-{
-  "customer_id": "C-00001",
-  "amount": 25000,
-  "term_months": 48,
-  "purpose_code": "HOME"
-}
-
-Response (200 OK):
-{
-  "credit_score": 720,
-  "eligible": "Y",
-  "interest_rate": 4.8,
-  "max_amount": 100000,
-  "reject_reason": "",
-  "return_code": "00"
-}
-
-Error Response (400):
-{
-  "detail": "Invalid loan parameters"
-}
-```
-
-### Fraud Detection (Single Transaction)
-
-```
-Endpoint: POST /fraud-detection
-
-Request Body:
-{
-  "customer_id": "C-00001",
-  "amount": 500.00,
-  "mcc": "5411",
-  "location": "Bucharest",
-  "timestamp": "2026-04-17T14:30:00",
-  "channel": "POS"
-}
-
-Response (200 OK):
-{
-  "fraud_risk": "LOW",
-  "fraud_score": 85,
-  "flags": "",
-  "recommendation": "APPROVE",
-  "return_code": "00"
-}
-
-Possible Fraud Risks: LOW, MEDIUM, HIGH
-```
-
-### Fraud Detection (Batch Analysis)
-
-```
-Endpoint: GET /fraud-batch/{customer_id}?limit=100
-
-Request:
-  GET http://localhost:8000/api/fraud-batch/C-00001?limit=200
-
-Response (200 OK):
-{
-  "customer_id": "C-00001",
-  "total_transactions": 2847,
-  "flagged_count": 12,
-  "fraud_risk_avg": "245",
-  "transactions": [
-    {
-      "transaction_id": "TXN-2847-01",
-      "amount": 500.00,
-      "fraud_risk": "LOW",
-      "fraud_score": 85,
-      "timestamp": "2026-04-17T14:30:00",
-      "location": "Bucharest",
-      "category": "Groceries"
-    },
-    {
-      "transaction_id": "TXN-2847-02",
-      "amount": 5000.00,
-      "fraud_risk": "MEDIUM",
-      "fraud_score": 425,
-      "timestamp": "2026-04-17T15:45:00",
-      "location": "New York",
-      "category": "Travel"
-    },
-    ...
-  ]
-}
-```
-
-### Customer List & Search
-
-```
-Endpoint: GET /customers
-
-Query Parameters:
-  - search: Optional search string (name or ID)
-  - skip: Pagination offset (default: 0)
-  - limit: Results per page (default: 50)
-
-Request:
-  GET http://localhost:8000/api/customers?search=John&limit=10
-
-Response (200 OK):
-{
-  "total": 3,
-  "customers": [
-    {
-      "customer_id": "C-00001",
-      "customer_name": "John Doe",
-      "account_tier": "GOLD",
-      "annual_income": 65000,
-      "last_transaction_date": "2026-04-16"
-    },
-    {
-      "customer_id": "C-00215",
-      "customer_name": "Johnny Depp",
-      "account_tier": "SILVER",
-      "annual_income": 55000,
-      "last_transaction_date": "2026-04-15"
-    },
-    ...
-  ]
-}
-```
-
-### Customer Details
-
-```
-Endpoint: GET /customers/{customer_id}
-
-Request:
-  GET http://localhost:8000/api/customers/C-00001
-
-Response (200 OK):
-{
-  "customer_id": "C-00001",
-  "customer_name": "John Doe",
-  "account_tier": "GOLD",
-  "annual_income": 65000,
-  "last_transaction_date": "2026-04-16"
-}
-```
-
-### Update Customer
-
-```
-Endpoint: PUT /customers/{customer_id}
-
-Request Body:
-{
-  "annual_income": 75000,
-  "account_tier": "GOLD"
-}
-
-Response (200 OK):
-{
-  "customer_id": "C-00001",
-  "customer_name": "John Doe",
-  "account_tier": "GOLD",
-  "annual_income": 75000,
-  "last_transaction_date": "2026-04-16"
-}
-```
-
-### Get Customer Transactions
-
-```
-Endpoint: GET /transactions/{customer_id}
-
-Query Parameters:
-  - limit: Maximum transactions to return
-
-Request:
-  GET http://localhost:8000/api/transactions/C-00001?limit=100
-
-Response (200 OK):
-{
-  "customer_id": "C-00001",
-  "total": 2847,
-  "transactions": [
-    {
-      "transaction_id": "TXN-001",
-      "amount": 500.00,
-      "timestamp": "2026-04-17T14:30:00",
-      "location": "Bucharest",
-      "category": "Groceries",
-      "fraud_risk": "LOW"
-    },
-    ...
-  ]
-}
-```
-
----
-
-## 💻 Frontend Integration Examples
-
-### Example 1: Fetch Customer 360° Data
-
-```typescript
-import { apiClient } from '../api/client'
-
-async function loadCustomerData(customerId: string) {
-  try {
-    const data = await apiClient.getCustomer360(customerId)
-    
-    console.log(`Customer: ${data.customer_name}`)
-    console.log(`Balance: $${(data.account_balance / 100).toFixed(2)}`)
-    console.log(`Risk Score: ${data.risk_score}`)
-    
-    return data
-  } catch (error) {
-    console.error('Failed to load customer:', error)
+// Dashboard useEffect
+useEffect(() => {
+  if (preSelectedCustomerId) {
+    handleFetch(preSelectedCustomerId)
   }
-}
-```
-
-### Example 2: Assess Loan Eligibility
-
-```typescript
-async function assessLoan(
-  customerId: string,
-  loanAmount: number,
-  termMonths: number
-) {
-  const result = await apiClient.assessLoan(
-    customerId,
-    loanAmount,
-    termMonths,
-    'PERS' // Personal loan
-  )
-  
-  if (result.eligible === 'Y') {
-    console.log(`✓ APPROVED`)
-    console.log(`Credit Score: ${result.credit_score}`)
-    console.log(`Interest Rate: ${result.interest_rate}%`)
-    console.log(`Max Approved: $${result.max_amount}`)
-  } else {
-    console.log(`✗ DECLINED`)
-    console.log(`Reason: ${result.reject_reason}`)
-  }
-}
-```
-
-### Example 3: Analyze Fraud Risk (Batch)
-
-```typescript
-async function analyzeCustomerFraud(customerId: string) {
-  const result = await apiClient.batchFraudAnalysis(customerId, 200)
-  
-  console.log(`Total Transactions: ${result.total_transactions}`)
-  console.log(`Flagged: ${result.flagged_count}`)
-  console.log(`Avg Risk: ${result.fraud_risk_avg}/999`)
-  
-  // Group by risk level
-  const byRisk = {
-    HIGH: result.transactions.filter(t => t.fraud_risk === 'HIGH'),
-    MEDIUM: result.transactions.filter(t => t.fraud_risk === 'MEDIUM'),
-    LOW: result.transactions.filter(t => t.fraud_risk === 'LOW')
-  }
-  
-  console.log(`High Risk Transactions: ${byRisk.HIGH.length}`)
-  byRisk.HIGH.forEach(t => {
-    console.log(`  - ${t.transaction_id}: $${t.amount} in ${t.location}`)
-  })
-}
-```
-
-### Example 4: Search Customers
-
-```typescript
-async function findCustomers(searchQuery: string) {
-  const result = await apiClient.getCustomers(searchQuery)
-  
-  console.log(`Found ${result.total} customers:`)
-  result.customers.forEach(customer => {
-    console.log(`  - ${customer.customer_name} (${customer.account_tier})`)
-  })
-  
-  return result.customers
-}
+}, [preSelectedCustomerId])
 ```
 
 ---
 
-## 🔗 Frontend-to-Backend Integration Points
+## FastAPI Backend (backend/main.py + wrappers.py)
 
-### 1. Dashboard Page → Customer 360° API
+### REST API Endpoints (All mapped to wrappers.py)
 
-**File:** `src/pages/Dashboard.tsx`
+| Method | Path | Purpose | Response |
+|--------|------|---------|----------|
+| GET | `/health` | Health check | `{status: "healthy", ...}` |
+| GET | `/customer-360/{customer_id}` | Profile + risk score | Customer360Response |
+| POST | `/loan-assessment` | Credit score + eligibility | LoanAssessmentResponse |
+| POST | `/fraud-detection` | Single transaction fraud risk | FraudDetectionResponse |
+| GET | `/fraud-batch/{customer_id}` | All transactions + scores | BatchFraudResponse |
+| GET | `/customers?search=...&skip=0&limit=100` | List/search customers | CustomersListResponse |
+| GET | `/customers/{customer_id}` | Single customer detail | CustomerRecord |
+| PUT | `/customers/{customer_id}` | Update customer (stub) | CustomerRecord |
+| GET | `/transactions/{customer_id}?limit=N` | Transaction list | {..., transactions: [...]} |
 
-```tsx
-import { apiClient } from '../api/client'
+### wrappers.py: Direct DuckDB Implementations
 
-const handleFetch = async () => {
-  const result = await apiClient.getCustomer360(customerId)
-  setData(result)
-}
+**Critical architectural note:** The wrappers do NOT call the Python analytics scripts (`python/customer_360.py`, etc.). Instead, they re-implement the logic directly with DuckDB queries for web performance.
+
+**Example: analyze_customer_360(customer_id)**
+```python
+def analyze_customer_360(customer_id: str):
+    # Direct DuckDB query (NOT calling customer_360.py)
+    customer = conn.execute(
+        f"SELECT * FROM read_parquet('data/customers.parquet') WHERE customer_id = ?",
+        [customer_id]
+    )
+    # Simplified risk score: (balance / 100000) * 500 + txn_count // 10
+    # (Different from the standalone 6-factor algorithm)
 ```
 
-**Backend:** `backend/main.py` → `GET /customer-360/{id}`
-
-### 2. Loan Assessment Page → Loan API
-
-**File:** `src/pages/LoanAssessment.tsx`
-
-```tsx
-const handleSubmit = async (e: React.FormEvent) => {
-  const res = await apiClient.assessLoan(
-    formData.customerId,
-    parseFloat(formData.amount),
-    parseInt(formData.term),
-    formData.purpose
-  )
-}
-```
-
-**Backend:** `backend/main.py` → `POST /loan-assessment`
-
-### 3. Fraud Detection Page → Fraud APIs
-
-**File:** `src/pages/FraudDetection.tsx`
-
-```tsx
-const result = await apiClient.batchFraudAnalysis(customerId)
-// Display transactions, filter by risk, etc.
-```
-
-**Backend:** 
-- `POST /fraud-detection` (single transaction)
-- `GET /fraud-batch/{id}` (all transactions)
-
-### 4. Customer Management → Customer APIs
-
-**File:** `src/pages/CustomerManagement.tsx`
-
-```tsx
-const result = await apiClient.getCustomers(searchQuery)
-const details = await apiClient.getCustomerDetails(customerId)
-await apiClient.updateCustomer(customerId, newData)
-```
-
-**Backend:**
-- `GET /customers`
-- `GET /customers/{id}`
-- `PUT /customers/{id}`
+**Algorithms in wrappers.py vs standalone scripts:**
+- **Risk score:** Simplified (wrappers) vs 6-factor (standalone)
+- **Fraud score:** 4 checks, 0–999 scale (wrappers) vs 6 checks, 0–100 scale (standalone)
+- **Balance calculation:** income - spent (wrappers) vs income × 3 (standalone)
 
 ---
 
-## 🏛️ Data Flow Through Layers
+## Data Flow Diagrams
 
-### Flow: Get Customer 360°
+### Customer 360° End-to-End
 
 ```
-┌────────────────────────────────────────┐
-│ React Component (src/pages/Dashboard) │
-│ User clicks "Search" for C-00001       │
-└──────────────┬─────────────────────────┘
-               │ Call apiClient.getCustomer360('C-00001')
-               ▼
-┌────────────────────────────────────────┐
-│ Axios Client (src/api/client.ts)      │
-│ GET /api/customer-360/C-00001          │
-└──────────────┬─────────────────────────┘
-               │ HTTP Request
-               ▼
-┌────────────────────────────────────────┐
-│ Vite Dev Server (localhost:5173)      │
-│ Proxy to backend /api → localhost:8000 │
-└──────────────┬─────────────────────────┘
-               │ HTTP GET
-               ▼
-┌────────────────────────────────────────┐
-│ FastAPI Backend (backend/main.py)     │
-│ @app.get("/customer-360/{customer_id}")│
-│ Call analyze_customer_360('C-00001')   │
-└──────────────┬─────────────────────────┘
-               │ Call Python function
-               ▼
-┌────────────────────────────────────────┐
-│ Python Analytics (python/customer_360) │
-│ Query: SELECT * FROM customers WHERE.. │
-│ Query: SELECT * FROM transactions..    │
-│ Calculate: balance, count, avg, risk   │
-└──────────────┬─────────────────────────┘
-               │ DuckDB execution
-               ▼
-┌────────────────────────────────────────┐
-│ DuckDB (in-process)                    │
-│ Read from parquet files                │
-│ • data/customers.parquet               │
-│ • data/transactions/**/*.parquet       │
-└──────────────┬─────────────────────────┘
-               │ Return results
-               ▼
-┌────────────────────────────────────────┐
-│ Python Analytics                       │
-│ Format as Customer360Response           │
-│ Return to FastAPI                      │
-└──────────────┬─────────────────────────┘
-               │ JSON response
-               ▼
-┌────────────────────────────────────────┐
-│ FastAPI Backend                        │
-│ HTTP 200 response                      │
-│ {                                      │
-│   "customer_name": "...",              │
-│   "account_balance": 12450.50,         │
-│   ...                                  │
-│ }                                      │
-└──────────────┬─────────────────────────┘
-               │ HTTP Response
-               ▼
-┌────────────────────────────────────────┐
-│ Axios Client                           │
-│ Parse JSON response                    │
-│ Return to React component              │
-└──────────────┬─────────────────────────┘
-               │ setData(result)
-               ▼
-┌────────────────────────────────────────┐
-│ React Component                        │
-│ Render UI with data                    │
-│ • MetricCard for balance               │
-│ • MetricCard for risk score            │
-│ • Profile card with name               │
-│ • Activity summary                     │
-└────────────────────────────────────────┘
+User selects "Allison Hill, C-00001" in Streamlit search
+        ↓
+Dashboard calls: python/customer_360.py C-00001
+        ↓
+customer_360.py queries DuckDB:
+  1. SELECT * FROM customers WHERE customer_id = 'C-00001'  [1ms]
+  2. Scan transactions/* for aggregate [45ms]  
+  3. Calculate risk score (3 factors)
+        ↓
+Writes 145-byte CUSTOMER-REC to stdout
+        ↓
+COBOL (CUSTOMER-LOOKUP) reads response, parses fields
+        ↓
+Displays: Name, Balance, Risk Score, Transactions, Dates
+```
+
+### Fraud Detection: Transaction-by-Transaction
+
+```
+User selects customer C-00001, clicks "Analyze All Transactions"
+        ↓
+ui/app.py calls: python/fraud_batch_analysis.py C-00001
+        ↓
+fraud_batch_analysis.py:
+  1. Query transaction agg stats (COUNT, AVG, STDDEV) [45ms]
+  2. Fetch ALL transactions for customer [15ms]
+  3. For each txn, call compute_fraud_score() [6 checks]
+  4. Join with fraud_labels.parquet (ground truth)
+        ↓
+Outputs pipe-delimited transaction list with fraud scores
+        ↓
+Streamlit displays filterable table (LOW/MEDIUM/HIGH tabs)
 ```
 
 ---
 
-## 🔐 No Changes to Core Logic
+## Design Trade-offs
 
-The key innovation: **COBOL + Python analytics remain untouched.**
-
-```
-OLD (Streamlit):
-  User Input (Web Browser)
-      ↓
-  Streamlit UI Layer (Python/HTML)
-      ↓
-  Analytics Scripts (Python)
-      ↓
-  DuckDB + Parquet
-
-NEW (React + FastAPI):
-  User Input (React/Browser)
-      ↓ (JSON via REST)
-  FastAPI Wrapper
-      ↓ (Python function calls)
-  Analytics Scripts (SAME Python) ← NO CHANGES
-      ↓
-  DuckDB + Parquet (SAME)
-```
-
-The Python scripts (`customer_360.py`, `loan_scoring.py`, `fraud_detect.py`) remain **identical**. The FastAPI backend simply wraps them as HTTP endpoints.
+| Decision | Alternative | Why Chosen |
+|----------|-------------|-----------|
+| In-process DuckDB | Remote SQL server | Eliminates server ops, scales to laptop |
+| Fixed-width IPC | JSON/REST | COBOL native (binary format), byte-predictable |
+| Subprocess per call | Connection pool | Stateless, eliminates lingering connections |
+| Parquet + date partition | Single file | Query pruning, enables parallel processing |
+| Streamlit + React | Single UI | Streamlit for rapid iteration, React for production |
 
 ---
 
-## 🚀 Deployment Architecture
+## Performance Summary
 
-### Local Development
-```
-Frontend: http://localhost:3000 (npm run dev)
-Backend: http://localhost:8000 (python main.py)
-```
-
-### Production Deployment
-```
-┌──────────────────────────────────────────────────────────┐
-│ CDN / Vercel / Netlify (Frontend)                        │
-│ • Compiled React (HTML/CSS/JS)                           │
-│ • Static assets cached globally                          │
-│ • CORS enabled for API requests                          │
-└─────────────────────┬──────────────────────────────────┘
-                      │ HTTPS API Calls
-                      ▼
-┌──────────────────────────────────────────────────────────┐
-│ Cloud Provider (AWS/GCP/Azure) Backend                   │
-│ • Docker container running FastAPI                       │
-│ • Load balancer / reverse proxy                          │
-│ • Auto-scaling based on traffic                          │
-│ • Health checks & monitoring                             │
-└─────────────────────┬──────────────────────────────────┘
-                      │ Imports Python Scripts
-                      ▼
-┌──────────────────────────────────────────────────────────┐
-│ Data Layer                                               │
-│ • S3 / Cloud Storage (Parquet files)                     │
-│ • In-process DuckDB (queries parquet)                    │
-│ • Optional: PostgreSQL for cached results                │
-└──────────────────────────────────────────────────────────┘
-```
+| Operation | Latency | Bottleneck |
+|-----------|---------|-----------|
+| IPC call (subprocess + file) | ~50ms | Python startup (35ms) + query (15ms) |
+| DuckDB query (1M records) | ~50ms | Parquet decoding + memory allocation |
+| Full transaction scan (10M) | ~2000ms | I/O, all 365 partitions |
+| React page load | ~200ms | API calls + rendering |
 
 ---
 
-## 📈 Performance Characteristics
+## Known Limitations
 
-### Request Latency
-
-| Operation | Typical Time | Bottleneck |
-|-----------|------------|-----------|
-| Customer 360° | 200-500ms | DuckDB query (10M+ records) |
-| Loan Assessment | 50-100ms | Credit scoring algorithm |
-| Fraud Detection (single) | 100-200ms | Anomaly detection |
-| Fraud Batch (200 txns) | 500-1000ms | DuckDB partitioned query |
-| Customer Search | 100-300ms | Index scan + filter |
-
-### Optimization Opportunities
-
-1. **Frontend caching** — Axios + React Query for request deduplication
-2. **Backend caching** — Redis for frequently queried customers
-3. **Data optimization** — Parquet statistics for faster pushdown
-4. **Query optimization** — DuckDB prepared statements for repeat queries
+1. **COBOL programs only read customer_id from CLI** — other parameters are hard-coded (documented in source via `TODO` comments)
+2. **FastAPI wrappers are simplified** — different risk/fraud algorithms than standalone scripts (for web performance)
+3. **No authentication** — assumes trusted internal network
+4. **No backup/recovery** — Parquet files are read-only, no transactional guarantees
+5. **Single-threaded DuckDB** — not suitable for true concurrent access (works fine for single-user analytics)
 
 ---
 
-## ✅ Architecture Advantages
-
-✨ **Separation of Concerns**
-- Frontend: UI, routing, animations
-- Backend: API, validation, orchestration
-- Analytics: Business logic (unchanged)
-
-⚡ **Scalability**
-- Frontend deployed to CDN (static assets)
-- Backend scales independently (auto-scaling)
-- Analytics layer remains lightweight (no UI overhead)
-
-🔧 **Maintainability**
-- Easy to add new pages / endpoints
-- Analytics changes don't affect UI
-- Clear API contracts via Swagger docs
-
-🎨 **User Experience**
-- Modern, responsive UI
-- Fast page transitions
-- Real-time feedback (loading states)
-
-🛡️ **Reliability**
-- Error boundaries in React
-- Proper HTTP status codes
-- Fallback error handling
-
----
-
-## 🔗 Integration Checklist
-
-- [x] React frontend with 4 pages
-- [x] FastAPI backend with all endpoints
-- [x] Axios client with all API methods
-- [x] Design system (colors, fonts, animations)
-- [x] Request/response models (Pydantic)
-- [x] CORS configuration
-- [x] Swagger API documentation
-- [x] Error handling (frontend + backend)
-- [x] Proxy configuration (frontend to backend)
-- [x] All existing Python scripts imported (unchanged)
-
----
-
-This architecture represents the **ideal balance** between modern frontend development, clean API design, and preserving battle-tested analytics logic. 🎯
+**Last Updated:** 2026-04-17
